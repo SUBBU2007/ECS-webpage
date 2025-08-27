@@ -1,19 +1,30 @@
 import { ReactNode } from 'react';
 import { Navigate } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
+import { Loader2 } from 'lucide-react';
 
 interface ProtectedRouteProps {
   children: ReactNode;
   requiresAdmin?: boolean;
 }
 
-// Simple access control - in a real app, this would check authentication
 const ProtectedRoute = ({ children, requiresAdmin = false }: ProtectedRouteProps) => {
-  // For demo purposes, admin access is open
-  // In production, you would check actual authentication here
-  
-  if (requiresAdmin) {
-    // Could add actual admin authentication check here
-    // For now, allow all access to admin routes
+  const { user, userRole, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/auth" replace />;
+  }
+
+  if (requiresAdmin && userRole !== 'admin') {
+    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;
