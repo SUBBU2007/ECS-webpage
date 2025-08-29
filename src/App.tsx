@@ -22,11 +22,7 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/auth" element={<Auth />} />
-          <Route path="/customer" element={
-            <ProtectedRoute>
-              <CustomerPortal />
-            </ProtectedRoute>
-          } />
+          <Route path="/customer" element={<CustomerPortal />} />
           <Route path="/admin" element={
             <ProtectedRoute requiresAdmin>
               <AdminPortal />
