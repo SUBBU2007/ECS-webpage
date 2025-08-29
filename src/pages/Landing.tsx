@@ -1,11 +1,11 @@
 import { Link } from 'react-router-dom';
-import { Users, Settings, ArrowRight, Clock, BarChart3, Shield, LogIn } from 'lucide-react';
+import { Users, Settings, ArrowRight, Clock, BarChart3, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useAuth } from '@/hooks/useAuth';
+
 
 const Landing = () => {
-  const { user, signOut } = useAuth();
+  
 
   return (
     <div className="min-h-screen bg-background">
@@ -16,25 +16,7 @@ const Landing = () => {
             <Users className="w-8 h-8 text-primary" />
             <span className="text-xl font-bold">Smart Queue</span>
           </div>
-          <div className="flex items-center gap-4">
-            {user ? (
-              <div className="flex items-center gap-4">
-                <span className="text-sm text-muted-foreground">
-                  Welcome, {user.email}
-                </span>
-                <Button variant="outline" onClick={signOut}>
-                  Sign Out
-                </Button>
-              </div>
-            ) : (
-              <Button variant="outline" asChild>
-                <Link to="/auth" className="flex items-center gap-2">
-                  <LogIn className="w-4 h-4" />
-                  Sign In
-                </Link>
-              </Button>
-            )}
-          </div>
+          <div className="flex items-center gap-4"></div>
         </div>
       </div>
 
