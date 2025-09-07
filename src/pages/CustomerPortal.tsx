@@ -14,7 +14,6 @@ const CustomerPortal = () => {
     currentServing,
     currentToken,
     getToken,
-    getEstimatedWaitTime,
     liveQueueCount,
     liveEstimatedWaitTime,
   } = useQueue();
@@ -23,24 +22,24 @@ const CustomerPortal = () => {
 
   const handleGetToken = async () => {
     setIsGettingToken(true);
-    
-    // Simulate slight delay for better UX
-    setTimeout(() => {
-      const newToken = getToken();
+    const newToken = await getToken();
+    if (newToken) {
       toast({
         title: "Token Issued",
         description: `Your token #${newToken.number} has been issued.`,
       });
-      setIsGettingToken(false);
-    }, 500);
+    } else {
+      toast({
+        title: "Error",
+        description: "Could not issue a token. Please try again.",
+        variant: "destructive",
+      });
+    }
+    setIsGettingToken(false);
   };
 
   const currentPosition = currentToken 
     ? queue.findIndex(token => token.id === currentToken.id) + 1 
-    : null;
-
-  const estimatedWait = currentPosition 
-    ? getEstimatedWaitTime(currentPosition) 
     : null;
 
   return (
@@ -116,7 +115,7 @@ const CustomerPortal = () => {
                     #{currentToken.number}
                   </div>
                   <div className="text-muted-foreground mb-6">
-                    Issued at {new Date(currentToken.timestamp).toLocaleTimeString()}
+                    Issued at {new Date(currentToken.created_at).toLocaleTimeString()}
                   </div>
                   
                   {currentPosition !== null && currentPosition > 0 && (
@@ -126,12 +125,6 @@ const CustomerPortal = () => {
                           <div className="text-2xl font-bold text-primary">{currentPosition}</div>
                           <div className="text-muted-foreground">Position in Queue</div>
                         </div>
-                        {estimatedWait && estimatedWait !== 'N/A' && (
-                          <div className="border-l border-border pl-4">
-                            <div className="text-2xl font-bold text-warning">{estimatedWait} min</div>
-                            <div className="text-muted-foreground">Estimated Wait</div>
-                          </div>
-                        )}
                       </div>
                     </div>
                   )}
