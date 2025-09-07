@@ -25,6 +25,10 @@ export const useQueue = () => {
   const [nextTokenNumber, setNextTokenNumber] = useState(1);
   const [currentToken, setCurrentToken] = useState<QueueToken | null>(null);
 
+  // State for live queue data from camera
+  const [liveQueueCount, setLiveQueueCount] = useState(0);
+  const [liveEstimatedWaitTime, setLiveEstimatedWaitTime] = useState(0);
+
   const [stats, setStats] = useState<QueueStats>({
     tokensServedToday: 0,
     peakQueueSize: 0,
@@ -73,6 +77,36 @@ export const useQueue = () => {
         console.error('Error loading stats data:', error);
       }
     }
+  }, []);
+
+  // Effect for fetching live queue data
+  useEffect(() => {
+    const fetchLiveQueueData = async () => {
+      try {
+        // This will be proxied to the Flask server in development
+        const response = await fetch('/api/queue');
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
+        }
+        const data = await response.json();
+
+        // Update live queue count and estimated wait time
+        setLiveQueueCount(data.count);
+        // Assuming 2 minutes average service time per person
+        setLiveEstimatedWaitTime(data.count * 2);
+
+      } catch (error) {
+        console.error("Failed to fetch live queue data:", error);
+        // Optionally, you could set an error state here
+      }
+    };
+
+    // Fetch immediately and then set an interval
+    fetchLiveQueueData();
+    const intervalId = setInterval(fetchLiveQueueData, 4000); // Fetch every 4 seconds
+
+    // Cleanup interval on component unmount
+    return () => clearInterval(intervalId);
   }, []);
 
   // Save queue data to localStorage
@@ -211,10 +245,12 @@ export const useQueue = () => {
     currentServing,
     nextTokenNumber,
     currentToken,
-    queueLength: queue.length,
+    queueLength: queue.length, // From token system
+    liveQueueCount,           // From camera feed
     
     // Stats
     stats,
+    liveEstimatedWaitTime,    // From camera feed
     averageWaitTime: stats.tokensProcessed > 0 ? Math.round(stats.totalWaitTime / stats.tokensProcessed) : 0,
     
     // Actions
