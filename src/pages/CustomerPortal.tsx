@@ -12,10 +12,11 @@ const CustomerPortal = () => {
   const {
     queue,
     currentServing,
-    queueLength,
     currentToken,
     getToken,
-    getEstimatedWaitTime
+    getEstimatedWaitTime,
+    liveQueueCount,
+    liveEstimatedWaitTime,
   } = useQueue();
 
   const [isGettingToken, setIsGettingToken] = useState(false);
@@ -59,9 +60,9 @@ const CustomerPortal = () => {
         {/* Queue Status Display */}
         <QueueDisplay
           currentServing={currentServing}
-          queueLength={queueLength}
+          queueLength={liveQueueCount}
           nextToken={queue[0]?.number}
-          estimatedWaitTime={currentPosition && estimatedWait !== 'N/A' ? estimatedWait : undefined}
+          estimatedWaitTime={liveEstimatedWaitTime}
         />
 
         {/* Token Management */}
