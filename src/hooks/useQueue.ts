@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, supabaseError } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
 import { RealtimeChannel } from '@supabase/supabase-js';
 
 export interface QueueToken {
@@ -19,6 +20,7 @@ export interface QueueStats {
 }
 
 export const useQueue = () => {
+  const { toast } = useToast();
   const [queue, setQueue] = useState<QueueToken[]>([]);
   const [currentServing, setCurrentServing] = useState<number | null>(null);
   const [nextTokenNumber, setNextTokenNumber] = useState(1);
@@ -65,11 +67,26 @@ export const useQueue = () => {
     return () => clearInterval(intervalId);
   }, []);
 
+  // Effect to display a persistent error if Supabase client fails to initialize
+  useEffect(() => {
+    if (supabaseError) {
+      toast({
+        title: 'Error: Application is not connected to the backend.',
+        description: 'Please contact support. The app will not function correctly.',
+        variant: 'destructive',
+        duration: Infinity, // Keep the toast visible
+      });
+    }
+  }, [supabaseError, toast]);
+
   // Effect for fetching initial data and setting up real-time subscriptions
   useEffect(() => {
+    if (!supabase) return; // Don't run if Supabase client is not available
+
     const channel = supabase.channel('queue-updates');
 
     const fetchInitialData = async () => {
+      try {
       // Fetch waiting list
       const { data: queueData, error: queueError } = await supabase
         .from('tokens')
@@ -94,6 +111,14 @@ export const useQueue = () => {
       }
 
       // TODO: Fetch and calculate stats
+      } catch (error) {
+        console.error("An unexpected error occurred during data fetch:", error);
+        toast({
+          title: 'Error Fetching Data',
+          description: 'Could not load queue data from the database.',
+          variant: 'destructive',
+        });
+      }
     };
 
     channel
@@ -110,6 +135,7 @@ export const useQueue = () => {
 
   // Get a new token
   const getToken = useCallback(async () => {
+    if (!supabase) return null;
     // The next token number is now sourced from the database state
     const { data: newToken, error: insertError } = await supabase
       .from('tokens')
@@ -141,6 +167,7 @@ export const useQueue = () => {
 
   // Serve next token
   const serveNext = useCallback(async () => {
+    if (!supabase) return null;
     const nextToken = queue.find(t => t.status === 'waiting');
     if (!nextToken) return null;
 
@@ -168,6 +195,7 @@ export const useQueue = () => {
 
   // Skip current token
   const skipToken = useCallback(async () => {
+    if (!supabase) return null;
     const nextToken = queue.find(t => t.status === 'waiting');
     if (!nextToken) return null;
 
@@ -188,6 +216,7 @@ export const useQueue = () => {
 
   // Reset queue (not stats)
   const resetQueue = useCallback(async () => {
+    if (!supabase) return;
     // This will set all 'waiting' and 'serving' tokens to 'skipped'
     const { error } = await supabase
       .from('tokens')
