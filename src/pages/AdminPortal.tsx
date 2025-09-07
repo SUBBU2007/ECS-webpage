@@ -23,7 +23,8 @@ const AdminPortal = () => {
   const {
     queue,
     currentServing,
-    queueLength,
+    queueLength, // from token system
+    liveQueueCount, // from camera
     serveNext,
     skipToken,
     resetQueue
@@ -42,19 +43,17 @@ const AdminPortal = () => {
     }
 
     setIsProcessing(true);
-    setTimeout(() => {
-      const servedToken = serveNext();
-      if (servedToken) {
-        toast({
-          title: "Next customer served",
-          description: `Token #${servedToken.number} is now being served.`,
-        });
-      }
-      setIsProcessing(false);
-    }, 300);
+    const servedToken = await serveNext();
+    if (servedToken) {
+      toast({
+        title: "Next customer served",
+        description: `Token #${servedToken.number} is now being served.`,
+      });
+    }
+    setIsProcessing(false);
   };
 
-  const handleSkipToken = () => {
+  const handleSkipToken = async () => {
     if (queueLength === 0) {
       toast({
         title: "No tokens to skip",
@@ -64,7 +63,7 @@ const AdminPortal = () => {
       return;
     }
 
-    const skippedToken = skipToken();
+    const skippedToken = await skipToken();
     if (skippedToken) {
       toast({
         title: "Token skipped",
@@ -73,8 +72,8 @@ const AdminPortal = () => {
     }
   };
 
-  const handleResetQueue = () => {
-    resetQueue();
+  const handleResetQueue = async () => {
+    await resetQueue();
     toast({
       title: "Queue reset",
       description: "The queue has been cleared. Daily stats are preserved.",
@@ -98,7 +97,7 @@ const AdminPortal = () => {
         {/* Queue Status Display */}
         <QueueDisplay
           currentServing={currentServing}
-          queueLength={queueLength}
+          queueLength={liveQueueCount}
           nextToken={queue[0]?.number}
           showNextToken={true}
         />
@@ -203,7 +202,7 @@ const AdminPortal = () => {
                         #{token.number}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        {new Date(token.timestamp).toLocaleTimeString()}
+                        {new Date(token.created_at).toLocaleTimeString()}
                       </div>
                       {index === 0 && (
                         <div className="text-xs text-success font-medium mt-1">
