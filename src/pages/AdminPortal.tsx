@@ -23,8 +23,8 @@ const AdminPortal = () => {
   const {
     queue,
     currentServing,
-    queueLength, // from token system
-    liveQueueCount, // from camera
+    queueLength,
+    liveQueueCount,
     serveNext,
     skipToken,
     resetQueue
@@ -43,17 +43,19 @@ const AdminPortal = () => {
     }
 
     setIsProcessing(true);
-    const servedToken = await serveNext();
-    if (servedToken) {
-      toast({
-        title: "Next customer served",
-        description: `Token #${servedToken.number} is now being served.`,
-      });
-    }
-    setIsProcessing(false);
+    setTimeout(() => {
+      const servedToken = serveNext();
+      if (servedToken) {
+        toast({
+          title: "Next customer served",
+          description: `Token #${servedToken.number} is now being served.`,
+        });
+      }
+      setIsProcessing(false);
+    }, 300);
   };
 
-  const handleSkipToken = async () => {
+  const handleSkipToken = () => {
     if (queueLength === 0) {
       toast({
         title: "No tokens to skip",
@@ -63,7 +65,7 @@ const AdminPortal = () => {
       return;
     }
 
-    const skippedToken = await skipToken();
+    const skippedToken = skipToken();
     if (skippedToken) {
       toast({
         title: "Token skipped",
@@ -72,8 +74,8 @@ const AdminPortal = () => {
     }
   };
 
-  const handleResetQueue = async () => {
-    await resetQueue();
+  const handleResetQueue = () => {
+    resetQueue();
     toast({
       title: "Queue reset",
       description: "The queue has been cleared. Daily stats are preserved.",
@@ -202,7 +204,7 @@ const AdminPortal = () => {
                         #{token.number}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        {new Date(token.created_at).toLocaleTimeString()}
+                        {new Date(token.timestamp).toLocaleTimeString()}
                       </div>
                       {index === 0 && (
                         <div className="text-xs text-success font-medium mt-1">
