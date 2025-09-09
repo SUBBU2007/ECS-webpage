@@ -75,7 +75,7 @@ const QueueDisplay = ({
       </Card>
 
       {/* Estimated Wait Time */}
-      {estimatedWaitTime && (
+      {(typeof estimatedWaitTime === 'number' && estimatedWaitTime >= 0) && (
         <Card className="bg-gradient-card shadow-card border-border md:col-span-3">
           <CardHeader className="text-center pb-4">
             <CardTitle className="text-lg text-muted-foreground flex items-center justify-center gap-2">
