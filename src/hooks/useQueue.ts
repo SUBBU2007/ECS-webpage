@@ -1,98 +1,119 @@
 import { useState, useEffect, useCallback } from 'react';
+import { supabase, supabaseError } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
+import { RealtimeChannel } from '@supabase/supabase-js';
 
-export interface QueueToken {
+// New interfaces to match the database schema
+export interface Counter {
+  id: number;
+  name: string;
+  is_active: boolean;
+}
+
+export interface Token {
   id: string;
   number: number;
-  timestamp: number;
+  status: 'waiting' | 'serving' | 'served' | 'skipped';
+  created_at: string;
+  updated_at: string;
+  served_at?: string;
+  served_by_counter_id?: number;
 }
-
-export interface QueueStats {
-  tokensServedToday: number;
-  peakQueueSize: number;
-  totalWaitTime: number; // in minutes
-  tokensProcessed: number; // for calculating average
-}
-
-const QUEUE_STORAGE_KEY = 'queue_data';
-const STATS_STORAGE_KEY = 'queue_stats';
-
-// Get today's date as a key
-const getTodayKey = () => new Date().toDateString();
 
 export const useQueue = () => {
-  const [queue, setQueue] = useState<QueueToken[]>([]);
-  const [currentServing, setCurrentServing] = useState<number | null>(null);
-  const [nextTokenNumber, setNextTokenNumber] = useState(1);
-  const [currentToken, setCurrentToken] = useState<QueueToken | null>(null);
+  const { toast } = useToast();
 
-  // State for live queue data from camera
+  // State for the multi-counter system
+  const [counters, setCounters] = useState<Counter[]>([]);
+  const [selectedCounterId, setSelectedCounterId] = useState<number | null>(null);
+  const [waitingQueue, setWaitingQueue] = useState<Token[]>([]);
+  const [servingTokens, setServingTokens] = useState<Token[]>([]);
+  const [nextTokenNumber, setNextTokenNumber] = useState(1);
+
+  // State for live queue data from camera (preserved)
   const [liveQueueCount, setLiveQueueCount] = useState(0);
   const [liveEstimatedWaitTime, setLiveEstimatedWaitTime] = useState(0);
 
-  const [stats, setStats] = useState<QueueStats>({
-    tokensServedToday: 0,
-    peakQueueSize: 0,
-    totalWaitTime: 0,
-    tokensProcessed: 0
-  });
-
-  // Load data from localStorage on mount
+  // Effect to display a persistent error if Supabase client fails to initialize
   useEffect(() => {
-    const savedQueue = localStorage.getItem(QUEUE_STORAGE_KEY);
-    const savedStats = localStorage.getItem(STATS_STORAGE_KEY);
-
-    if (savedQueue) {
-      try {
-        const queueData = JSON.parse(savedQueue);
-        setQueue(queueData.queue || []);
-        setCurrentServing(queueData.currentServing || null);
-        setNextTokenNumber(queueData.nextTokenNumber || 1);
-        setCurrentToken(queueData.currentToken || null);
-      } catch (error) {
-        console.error('Error loading queue data:', error);
-      }
+    if (supabaseError) {
+      toast({
+        title: 'Error: Application is not connected to the backend.',
+        description: 'Please check your environment credentials and database status.',
+        variant: 'destructive',
+        duration: Infinity,
+      });
     }
+  }, [supabaseError, toast]);
 
-    if (savedStats) {
+  // Main effect for fetching all data and setting up real-time subscriptions
+  useEffect(() => {
+    if (!supabase) return;
+
+    const fetchAllData = async () => {
       try {
-        const statsData = JSON.parse(savedStats);
-        const today = getTodayKey();
-        if (statsData.date === today) {
-          setStats(statsData.stats);
-        } else {
-          // Reset stats for new day
-          const newStats = {
-            tokensServedToday: 0,
-            peakQueueSize: 0,
-            totalWaitTime: 0,
-            tokensProcessed: 0
-          };
-          setStats(newStats);
-          localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify({
-            date: today,
-            stats: newStats
-          }));
-        }
-      } catch (error) {
-        console.error('Error loading stats data:', error);
-      }
-    }
-  }, []);
+        // Fetch all active counters
+        const { data: countersData, error: countersError } = await supabase
+          .from('counters')
+          .select('*')
+          .eq('is_active', true)
+          .order('id');
+        if (countersError) throw countersError;
+        setCounters(countersData || []);
 
-  // Effect for fetching live queue data
+        // Fetch all tokens that are currently waiting or being served
+        const { data: tokensData, error: tokensError } = await supabase
+          .from('tokens')
+          .select('*')
+          .in('status', ['waiting', 'serving'])
+          .order('number', { ascending: true });
+        if (tokensError) throw tokensError;
+        setWaitingQueue(tokensData?.filter(t => t.status === 'waiting') || []);
+        setServingTokens(tokensData?.filter(t => t.status === 'serving') || []);
+
+        // Fetch the next token number
+        const { data: stateData, error: stateError } = await supabase
+          .from('system_state')
+          .select('next_token_number')
+          .limit(1)
+          .single();
+        if (stateError) throw stateError;
+        setNextTokenNumber(stateData.next_token_number);
+
+      } catch (error) {
+        console.error("Error fetching initial data:", error);
+        toast({
+          title: 'Error Fetching Data',
+          description: 'Could not load queue data. Please ensure migrations are applied.',
+          variant: 'destructive',
+        });
+      }
+    };
+
+    // Set up a single channel to listen to all relevant table changes
+    const channel = supabase.channel('multi-counter-queue');
+    channel
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tokens' }, fetchAllData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'counters' }, fetchAllData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_state' }, fetchAllData)
+      .subscribe();
+
+    fetchAllData();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [toast]);
+
+  // Effect for fetching live queue data (preserved)
   useEffect(() => {
     const fetchLiveQueueData = async () => {
       try {
-        // This will be proxied to the Flask server in development
         const response = await fetch('/api/queue');
-        if (!response.ok) {
-          throw new Error('Network response was not ok');
-        }
+        if (!response.ok) throw new Error('Network response was not ok');
         const data = await response.json();
-
         setLiveQueueCount(data.count);
         setLiveEstimatedWaitTime(data.count * 2);
-
       } catch (error) {
         console.error("Failed to fetch live queue data:", error);
       }
@@ -102,156 +123,109 @@ export const useQueue = () => {
     return () => clearInterval(intervalId);
   }, []);
 
-  // Save queue data to localStorage
-  const saveQueueData = useCallback((queueData: any) => {
-    localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(queueData));
+
+  // --- ACTIONS ---
+
+  const selectCounter = (counterId: number) => {
+    setSelectedCounterId(counterId);
+  };
+
+  const getToken = useCallback(async () => {
+    if (!supabase) return null;
+
+    const { data: newToken, error: insertError } = await supabase
+      .from('tokens')
+      .insert({ number: nextTokenNumber, status: 'waiting' })
+      .select()
+      .single();
+
+    if (insertError) {
+      console.error('Error getting token:', insertError);
+      toast({ title: "Error", description: "Could not issue a token. Please try again.", variant: "destructive" });
+      return null;
+    }
+
+    await supabase
+      .from('system_state')
+      .update({ next_token_number: nextTokenNumber + 1 })
+      .eq('id', 1);
+
+    toast({ title: "Token Issued", description: `Your token #${newToken.number} has been issued.` });
+    return newToken as Token;
+  }, [nextTokenNumber, toast]);
+
+  const serveNext = useCallback(async (counterId: number) => {
+    if (!supabase) return null;
+
+    const nextToken = waitingQueue[0];
+    if (!nextToken) {
+      toast({ title: "No tokens in queue", variant: "destructive" });
+      return null;
+    }
+
+    const { data: servedToken, error } = await supabase
+      .from('tokens')
+      .update({ status: 'serving', served_by_counter_id: counterId })
+      .eq('id', nextToken.id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error serving next token:', error);
+      return null;
+    }
+    return servedToken as Token;
+  }, [waitingQueue, toast]);
+
+  const markAsServed = useCallback(async (tokenId: string) => {
+    if (!supabase) return null;
+
+    const { data: servedToken, error } = await supabase
+      .from('tokens')
+      .update({ status: 'served', served_at: new Date().toISOString() })
+      .eq('id', tokenId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error marking token as served:', error);
+      return null;
+    }
+    return servedToken as Token;
   }, []);
 
-  // Save stats data to localStorage
-  const saveStatsData = useCallback((statsData: QueueStats) => {
-    localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify({
-      date: getTodayKey(),
-      stats: statsData
-    }));
+  const returnToQueue = useCallback(async (tokenId: string) => {
+    if (!supabase) return null;
+
+    const { data: returnedToken, error } = await supabase
+      .from('tokens')
+      .update({ status: 'waiting', served_by_counter_id: null })
+      .eq('id', tokenId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error returning token to queue:', error);
+      return null;
+    }
+    return returnedToken as Token;
   }, []);
 
-  // Get a new token
-  const getToken = useCallback(() => {
-    const newToken: QueueToken = {
-      id: `token-${Date.now()}`,
-      number: nextTokenNumber,
-      timestamp: Date.now()
-    };
-
-    const newQueue = [...queue, newToken];
-    const newNextTokenNumber = nextTokenNumber + 1;
-
-    setQueue(newQueue);
-    setNextTokenNumber(newNextTokenNumber);
-    setCurrentToken(newToken);
-
-    // Update peak queue size
-    const newStats = {
-      ...stats,
-      peakQueueSize: Math.max(stats.peakQueueSize, newQueue.length)
-    };
-    setStats(newStats);
-    saveStatsData(newStats);
-
-    saveQueueData({
-      queue: newQueue,
-      currentServing,
-      nextTokenNumber: newNextTokenNumber,
-      currentToken: newToken
-    });
-
-    return newToken;
-  }, [queue, nextTokenNumber, currentServing, stats, saveQueueData, saveStatsData]);
-
-  // Serve next token
-  const serveNext = useCallback(() => {
-    if (queue.length === 0) return null;
-
-    const nextToken = queue[0];
-    const newQueue = queue.slice(1);
-    const waitTime = (Date.now() - nextToken.timestamp) / (1000 * 60); // minutes
-
-    setQueue(newQueue);
-    setCurrentServing(nextToken.number);
-
-    // Update stats
-    const newStats = {
-      ...stats,
-      tokensServedToday: stats.tokensServedToday + 1,
-      totalWaitTime: stats.totalWaitTime + waitTime,
-      tokensProcessed: stats.tokensProcessed + 1
-    };
-    setStats(newStats);
-    saveStatsData(newStats);
-
-    saveQueueData({
-      queue: newQueue,
-      currentServing: nextToken.number,
-      nextTokenNumber,
-      currentToken
-    });
-
-    return nextToken;
-  }, [queue, nextTokenNumber, currentToken, stats, saveQueueData, saveStatsData]);
-
-  // Skip current token
-  const skipToken = useCallback(() => {
-    if (queue.length === 0) return null;
-
-    const skippedToken = queue[0];
-    const newQueue = queue.slice(1);
-
-    setQueue(newQueue);
-
-    saveQueueData({
-      queue: newQueue,
-      currentServing,
-      nextTokenNumber,
-      currentToken
-    });
-
-    return skippedToken;
-  }, [queue, currentServing, nextTokenNumber, currentToken, saveQueueData]);
-
-  // Reset queue (not stats)
-  const resetQueue = useCallback(() => {
-    setQueue([]);
-    setCurrentServing(null);
-    setNextTokenNumber(1);
-    setCurrentToken(null);
-
-    saveQueueData({
-      queue: [],
-      currentServing: null,
-      nextTokenNumber: 1,
-      currentToken: null
-    });
-  }, [saveQueueData]);
-
-  // Reset daily stats only
-  const resetStats = useCallback(() => {
-    const newStats = {
-      tokensServedToday: 0,
-      peakQueueSize: 0,
-      totalWaitTime: 0,
-      tokensProcessed: 0
-    };
-    setStats(newStats);
-    saveStatsData(newStats);
-  }, [saveStatsData]);
-
-  // Calculate estimated wait time
-  const getEstimatedWaitTime = useCallback((position: number) => {
-    if (stats.tokensProcessed === 0) return 'N/A';
-    const avgWaitTime = stats.totalWaitTime / stats.tokensProcessed;
-    return Math.round(avgWaitTime * position);
-  }, [stats]);
 
   return {
-    // Queue state
-    queue,
-    currentServing,
-    nextTokenNumber,
-    currentToken,
-    queueLength: queue.length,
+    // State
+    counters,
+    selectedCounterId,
+    waitingQueue,
+    servingTokens,
     liveQueueCount,
-    
-    // Stats
-    stats,
-    averageWaitTime: stats.tokensProcessed > 0 ? Math.round(stats.totalWaitTime / stats.tokensProcessed) : 0,
     liveEstimatedWaitTime,
-    
+
     // Actions
+    selectCounter,
     getToken,
     serveNext,
-    skipToken,
-    resetQueue,
-    resetStats,
-    getEstimatedWaitTime
+    markAsServed,
+    returnToQueue,
   };
 };
