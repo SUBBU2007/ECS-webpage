@@ -45,10 +45,14 @@ const CustomerPortal = () => {
     if (updatedToken) {
       setMyToken(updatedToken);
     } else {
-      // My token is no longer in waiting or serving, maybe it was served/skipped
-      // For simplicity, we just clear it. A more robust solution might check 'served' status.
-      localStorage.removeItem(TOKEN_STORAGE_KEY);
-      setMyToken(null);
+      // This token is not in the waiting or serving list.
+      // It might have been served, or this might be a race condition right after creation.
+      // Add a 5-second grace period to prevent the race condition.
+      const isNewlyCreated = (new Date().getTime() - new Date(myToken.created_at).getTime()) < 5000;
+      if (!isNewlyCreated) {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+        setMyToken(null);
+      }
     }
   }, [waitingQueue, servingTokens, myToken]);
 
