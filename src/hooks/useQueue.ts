@@ -1,15 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase, supabaseError } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { RealtimeChannel } from '@supabase/supabase-js';
 
-// New interfaces to match the database schema
-export interface Counter {
-  id: number;
-  name: string;
-  is_active: boolean;
-}
-
+// This interface is now sourced from the database schema
 export interface Token {
   id: string;
   number: number;
@@ -20,92 +13,75 @@ export interface Token {
   served_by_counter_id?: number;
 }
 
+// The hook provides a simplified, single-queue interface
 export const useQueue = () => {
   const { toast } = useToast();
 
-  // State for the multi-counter system
-  const [counters, setCounters] = useState<Counter[]>([]);
-  const [selectedCounterId, setSelectedCounterId] = useState<number | null>(null);
-  const [waitingQueue, setWaitingQueue] = useState<Token[]>([]);
-  const [servingTokens, setServingTokens] = useState<Token[]>([]);
+  // State for the simplified UI
+  const [queue, setQueue] = useState<Token[]>([]);
+  const [currentServing, setCurrentServing] = useState<number | null>(null);
   const [nextTokenNumber, setNextTokenNumber] = useState(1);
+  const [currentToken, setCurrentToken] = useState<Token | null>(null);
 
-  // State for live queue data from camera (preserved)
+  // State for the live camera feed
   const [liveQueueCount, setLiveQueueCount] = useState(0);
   const [liveEstimatedWaitTime, setLiveEstimatedWaitTime] = useState(0);
 
-  // Effect to display a persistent error if Supabase client fails to initialize
+  // --- Effects ---
+
+  // Effect to show a persistent error if the Supabase client fails to initialize
   useEffect(() => {
     if (supabaseError) {
       toast({
-        title: 'Error: Application is not connected to the backend.',
-        description: 'Please check your environment credentials and database status.',
+        title: 'Error: Application not connected to backend',
+        description: 'Please check environment credentials and database status.',
         variant: 'destructive',
         duration: Infinity,
       });
     }
   }, [supabaseError, toast]);
 
-  // Main effect for fetching all data and setting up real-time subscriptions
+  // Main effect for fetching data from Supabase and setting up real-time listeners
   useEffect(() => {
     if (!supabase) return;
 
-    const fetchAllData = async () => {
+    const fetchAndProcessData = async () => {
       try {
-        // Fetch all active counters
-        const { data: countersData, error: countersError } = await supabase
-          .from('counters')
-          .select('*')
-          .eq('is_active', true)
-          .order('id');
-        if (countersError) throw countersError;
-        setCounters(countersData || []);
-
-        // Fetch all tokens that are currently waiting or being served
         const { data: tokensData, error: tokensError } = await supabase
           .from('tokens')
           .select('*')
           .in('status', ['waiting', 'serving'])
           .order('number', { ascending: true });
         if (tokensError) throw tokensError;
-        setWaitingQueue(tokensData?.filter(t => t.status === 'waiting') || []);
-        setServingTokens(tokensData?.filter(t => t.status === 'serving') || []);
 
-        // Fetch the next token number
+        setQueue(tokensData?.filter(t => t.status === 'waiting') || []);
+        const servingToken = tokensData?.find(t => t.status === 'serving');
+        setCurrentServing(servingToken?.number || null);
+
         const { data: stateData, error: stateError } = await supabase
           .from('system_state')
           .select('next_token_number')
-          .limit(1)
-          .single();
+          .limit(1).single();
         if (stateError) throw stateError;
         setNextTokenNumber(stateData.next_token_number);
 
       } catch (error) {
         console.error("Error fetching initial data:", error);
-        toast({
-          title: 'Error Fetching Data',
-          description: 'Could not load queue data. Please ensure migrations are applied.',
-          variant: 'destructive',
-        });
+        toast({ title: 'Error Fetching Data', variant: 'destructive' });
       }
     };
 
-    // Set up a single channel to listen to all relevant table changes
-    const channel = supabase.channel('multi-counter-queue');
+    const channel = supabase.channel('single-queue-updates');
     channel
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tokens' }, fetchAllData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'counters' }, fetchAllData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_state' }, fetchAllData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tokens' }, fetchAndProcessData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_state' }, fetchAndProcessData)
       .subscribe();
 
-    fetchAllData();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    fetchAndProcessData();
+    return () => { supabase.removeChannel(channel); };
   }, [toast]);
 
-  // Effect for fetching live queue data (preserved)
+  // Effect for fetching live data from the camera feed
   useEffect(() => {
     const fetchLiveQueueData = async () => {
       try {
@@ -124,108 +100,82 @@ export const useQueue = () => {
   }, []);
 
 
-  // --- ACTIONS ---
-
-  const selectCounter = (counterId: number) => {
-    setSelectedCounterId(counterId);
-  };
+  // --- Actions ---
 
   const getToken = useCallback(async () => {
     if (!supabase) return null;
 
-    const { data: newToken, error: insertError } = await supabase
-      .from('tokens')
-      .insert({ number: nextTokenNumber, status: 'waiting' })
-      .select()
-      .single();
+    // Invoke the secure Edge Function to handle token creation
+    const { data, error } = await supabase.functions.invoke('get-token');
 
-    if (insertError) {
-      console.error('Error getting token:', insertError);
+    if (error) {
       toast({ title: "Error", description: "Could not issue a token. Please try again.", variant: "destructive" });
+      console.error("Error invoking get-token function:", error);
       return null;
     }
 
-    await supabase
-      .from('system_state')
-      .update({ next_token_number: nextTokenNumber + 1 })
-      .eq('id', 1);
+    // The Edge Function returns the newly created token record
+    const newToken = data;
+    setCurrentToken(newToken);
+    return newToken;
+  }, [toast]);
 
-    toast({ title: "Token Issued", description: `Your token #${newToken.number} has been issued.` });
-    return newToken as Token;
-  }, [nextTokenNumber, toast]);
-
-  const serveNext = useCallback(async (counterId: number) => {
+  const serveNext = useCallback(async () => {
     if (!supabase) return null;
-
-    const nextToken = waitingQueue[0];
+    const nextToken = queue[0];
     if (!nextToken) {
       toast({ title: "No tokens in queue", variant: "destructive" });
       return null;
     }
-
-    const { data: servedToken, error } = await supabase
+    const { data: counter } = await supabase.from('counters').select('id').limit(1).single();
+    if (!counter) {
+      toast({ title: "No counters available", description: "Please add a counter in the database.", variant: "destructive" });
+      return null;
+    }
+    const { data, error } = await supabase
       .from('tokens')
-      .update({ status: 'serving', served_by_counter_id: counterId })
+      .update({ status: 'serving', served_by_counter_id: counter.id })
       .eq('id', nextToken.id)
-      .select()
-      .single();
-
+      .select().single();
     if (error) {
       console.error('Error serving next token:', error);
       return null;
     }
-    return servedToken as Token;
-  }, [waitingQueue, toast]);
+    return data;
+  }, [queue, toast]);
 
-  const markAsServed = useCallback(async (tokenId: string) => {
+  const skipToken = useCallback(async () => {
     if (!supabase) return null;
-
-    const { data: servedToken, error } = await supabase
+    const nextToken = queue[0];
+    if (!nextToken) return null;
+    const { data, error } = await supabase
       .from('tokens')
-      .update({ status: 'served', served_at: new Date().toISOString() })
-      .eq('id', tokenId)
-      .select()
-      .single();
-
+      .update({ status: 'skipped' })
+      .eq('id', nextToken.id)
+      .select().single();
     if (error) {
-      console.error('Error marking token as served:', error);
+      console.error('Error skipping token:', error);
       return null;
     }
-    return servedToken as Token;
+    return data;
+  }, [queue]);
+
+  const resetQueue = useCallback(async () => {
+    if (!supabase) return;
+    await supabase.from('tokens').update({ status: 'skipped' }).eq('status', 'waiting');
   }, []);
-
-  const returnToQueue = useCallback(async (tokenId: string) => {
-    if (!supabase) return null;
-
-    const { data: returnedToken, error } = await supabase
-      .from('tokens')
-      .update({ status: 'waiting', served_by_counter_id: null })
-      .eq('id', tokenId)
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Error returning token to queue:', error);
-      return null;
-    }
-    return returnedToken as Token;
-  }, []);
-
 
   return {
-    // State
-    counters,
-    selectedCounterId,
-    waitingQueue,
-    servingTokens,
+    queue,
+    queueLength: queue.length,
+    currentServing,
+    nextToken: queue[0],
+    currentToken,
     liveQueueCount,
     liveEstimatedWaitTime,
-
-    // Actions
-    selectCounter,
     getToken,
     serveNext,
-    markAsServed,
-    returnToQueue,
+    skipToken,
+    resetQueue,
   };
 };

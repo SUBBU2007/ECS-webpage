@@ -1,54 +1,78 @@
 import { useState } from 'react';
-import { Play, Check, Undo, Settings, Users, MonitorSmartphone } from 'lucide-react';
+import { Play, SkipForward, RotateCcw, Settings, AlertTriangle, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { useQueue, Token, Counter } from '@/hooks/useQueue';
+import { useQueue } from '@/hooks/useQueue';
+import QueueDisplay from '@/components/QueueDisplay';
 import Navigation from '@/components/Navigation';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Label } from '@/components/ui/label';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 
 const AdminPortal = () => {
   const { toast } = useToast();
   const {
-    counters,
-    selectedCounterId,
-    waitingQueue,
-    servingTokens,
-    selectCounter,
+    queue,
+    queueLength,
+    currentServing,
+    nextToken,
     serveNext,
-    markAsServed,
-    returnToQueue,
+    skipToken,
+    resetQueue,
+    liveQueueCount,
   } = useQueue();
 
-  const [isProcessing, setIsProcessing] = useState<string | null>(null); // Store token ID
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const handleServeNext = async () => {
-    if (!selectedCounterId) {
-      toast({ title: "No counter selected", description: "Please select a counter to serve from.", variant: "destructive" });
-      return;
-    }
-    if (waitingQueue.length === 0) {
+    if (queueLength === 0) {
       toast({ title: "No tokens in queue", variant: "destructive" });
       return;
     }
-    await serveNext(selectedCounterId);
-  };
-
-  const handleAction = async (action: 'serve' | 'return', tokenId: string) => {
-    setIsProcessing(tokenId);
-    if (action === 'serve') {
-      await markAsServed(tokenId);
-      toast({ title: "Token served", description: "The customer has been served." });
-    } else {
-      await returnToQueue(tokenId);
-      toast({ title: "Token returned", description: "The token is now back in the waiting queue." });
+    setIsProcessing(true);
+    try {
+      const servedToken = await serveNext();
+      if (servedToken) {
+        toast({
+          title: "Next customer served",
+          description: `Token #${servedToken.number} is now being served.`,
+        });
+      }
+    } finally {
+      setIsProcessing(false);
     }
-    setIsProcessing(null);
   };
 
-  const getCounterName = (counterId: number): string => {
-    return counters.find(c => c.id === counterId)?.name || 'Unknown Counter';
+  const handleSkipToken = async () => {
+    if (queueLength === 0) return;
+    setIsProcessing(true);
+    try {
+      const skipped = await skipToken();
+      if (skipped) {
+        toast({ title: "Token skipped", description: `Token #${skipped.number} has been skipped.` });
+      }
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleResetQueue = async () => {
+    setIsProcessing(true);
+    try {
+      await resetQueue();
+      toast({ title: "Queue reset", description: "The token queue has been cleared." });
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -65,121 +89,106 @@ const AdminPortal = () => {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Left Column: Controls & Waiting Queue */}
-          <div className="lg:col-span-2 space-y-8">
-            {/* Now Serving Section */}
-            <Card className="bg-gradient-card shadow-elevated border-border">
-              <CardHeader>
-                <CardTitle className="text-2xl flex items-center gap-2">
-                  <MonitorSmartphone className="w-6 h-6" />
-                  Now Serving
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {counters.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {counters.map(counter => {
-                      const servingToken = servingTokens.find(t => t.served_by_counter_id === counter.id);
-                      return (
-                        <div key={counter.id} className="p-4 bg-muted/50 rounded-lg border">
-                          <h3 className="font-bold text-lg mb-2">{counter.name}</h3>
-                          {servingToken ? (
-                            <div className="flex flex-col items-center justify-center bg-background p-4 rounded-md">
-                              <div className="text-4xl font-bold text-success pulse-glow mb-2">#{servingToken.number}</div>
-                              <div className="flex gap-2 mt-2">
-                                <Button size="sm" variant="success" onClick={() => handleAction('serve', servingToken.id)} disabled={isProcessing === servingToken.id}>
-                                  <Check className="w-4 h-4 mr-2" /> Done
-                                </Button>
-                                <Button size="sm" variant="outline" onClick={() => handleAction('return', servingToken.id)} disabled={isProcessing === servingToken.id}>
-                                  <Undo className="w-4 h-4 mr-2" /> Return
-                                </Button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="text-center text-muted-foreground p-4">Idle</div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className="text-muted-foreground">No active counters.</p>
-                )}
-              </CardContent>
-            </Card>
+        <QueueDisplay
+          currentServing={currentServing}
+          queueLength={liveQueueCount}
+          nextToken={nextToken?.number}
+          showNextToken={true}
+        />
 
-            {/* Waiting Queue List */}
+        <div className="max-w-4xl mx-auto mt-8">
+          <Card className="bg-gradient-card shadow-elevated border-border mb-8">
+            <CardHeader>
+              <CardTitle className="text-2xl flex items-center gap-2">
+                <Settings className="w-6 h-6" />
+                Queue Management
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  onClick={handleServeNext}
+                  disabled={isProcessing || queueLength === 0}
+                  className="h-20 flex-col transition-bounce bg-success text-success-foreground hover:bg-success/90"
+                >
+                  <Play className="w-6 h-6 mb-1" />
+                  <span>Serve Next (#{nextToken?.number || '--'})</span>
+                </Button>
+
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  onClick={handleSkipToken}
+                  disabled={isProcessing || queueLength === 0}
+                  className="h-20 flex-col transition-bounce bg-warning text-warning-foreground hover:bg-warning/90"
+                >
+                  <SkipForward className="w-6 h-6 mb-1" />
+                  <span>Skip Token</span>
+                </Button>
+
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="destructive"
+                      size="lg"
+                      className="h-20 flex-col transition-bounce"
+                      disabled={isProcessing || queueLength === 0}
+                    >
+                      <RotateCcw className="w-6 h-6 mb-1" />
+                      <span>Reset Queue</span>
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This action will clear all waiting tokens from the queue. This cannot be undone.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction onClick={handleResetQueue}>Reset</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            </CardContent>
+          </Card>
+
+          {queueLength > 0 ? (
             <Card className="bg-gradient-card shadow-card border-border">
               <CardHeader>
                 <CardTitle className="text-xl flex items-center gap-2">
                   <Users className="w-5 h-5" />
-                  Waiting Queue ({waitingQueue.length} waiting)
+                  Waiting Queue ({queueLength} waiting)
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {waitingQueue.length > 0 ? (
-                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                    {waitingQueue.map((token, index) => (
-                      <div
-                        key={token.id}
-                        className={`p-3 text-center border rounded-lg bg-muted/50 ${index === 0 ? 'border-success bg-success/10' : 'border-border'}`}
-                      >
-                        <div className={`font-bold text-lg ${index === 0 ? 'text-success' : 'text-foreground'}`}>#{token.number}</div>
-                        <div className="text-xs text-muted-foreground">{new Date(token.created_at).toLocaleTimeString()}</div>
-                        {index === 0 && <div className="text-xs text-success font-medium mt-1">Next</div>}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-8">
-                    <div className="text-6xl mb-4">🎉</div>
-                    <h3 className="text-2xl font-bold mb-2">Queue is Empty!</h3>
-                    <p className="text-muted-foreground">No customers are currently waiting.</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Right Column: Counter Selection & Actions */}
-          <div className="lg:col-span-1 space-y-8">
-            <Card className="bg-gradient-card shadow-elevated border-border">
-              <CardHeader>
-                <CardTitle className="text-2xl flex items-center gap-2">
-                  <Settings className="w-6 h-6" />
-                  Controls
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div>
-                  <Label className="text-base font-semibold mb-2 block">Select Your Counter</Label>
-                  <RadioGroup
-                    value={selectedCounterId?.toString()}
-                    onValueChange={(value) => selectCounter(parseInt(value))}
-                    className="space-y-2"
-                  >
-                    {counters.map(counter => (
-                      <div key={counter.id} className="flex items-center space-x-2">
-                        <RadioGroupItem value={counter.id.toString()} id={`counter-${counter.id}`} />
-                        <Label htmlFor={`counter-${counter.id}`} className="text-lg">{counter.name}</Label>
-                      </div>
-                    ))}
-                  </RadioGroup>
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                  {queue.map((token, index) => (
+                    <div
+                      key={token.id}
+                      className={`p-3 text-center border rounded-lg bg-muted/50 ${index === 0 ? 'border-success bg-success/10' : 'border-border'}`}
+                    >
+                      <div className={`font-bold text-lg ${index === 0 ? 'text-success' : 'text-foreground'}`}>#{token.number}</div>
+                      <div className="text-xs text-muted-foreground">{new Date(token.created_at).toLocaleTimeString()}</div>
+                      {index === 0 && <div className="text-xs text-success font-medium mt-1">Next</div>}
+                    </div>
+                  ))}
                 </div>
-                <Button
-                  size="lg"
-                  onClick={handleServeNext}
-                  disabled={!selectedCounterId || waitingQueue.length === 0}
-                  className="w-full flex-col h-24 transition-bounce bg-success text-success-foreground hover:bg-success/90"
-                >
-                  <Play className="w-8 h-8 mb-1" />
-                  <span className="text-lg">Serve Next Token</span>
-                  {waitingQueue.length > 0 && <span className="text-sm opacity-80">#{waitingQueue[0].number}</span>}
-                </Button>
               </CardContent>
             </Card>
-          </div>
+          ) : (
+             <Card className="bg-gradient-card shadow-card border-border">
+              <CardContent className="pt-8 pb-8 text-center">
+                <div className="text-6xl mb-4">🎉</div>
+                <h3 className="text-2xl font-bold mb-2">Queue is Empty!</h3>
+                <p className="text-muted-foreground">No customers are currently waiting.</p>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
     </div>
