@@ -1,46 +1,75 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Ticket, Clock, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { useQueue } from '@/hooks/useQueue';
+import { useQueue, Token } from '@/hooks/useQueue';
 import QueueDisplay from '@/components/QueueDisplay';
 import Navigation from '@/components/Navigation';
+
+const TOKEN_STORAGE_KEY = 'customer_token';
 
 const CustomerPortal = () => {
   const { toast } = useToast();
   const {
-    queue,
-    currentServing,
-    currentToken,
+    counters,
+    waitingQueue,
+    servingTokens,
     getToken,
-    getEstimatedWaitTime,
     liveQueueCount,
     liveEstimatedWaitTime,
   } = useQueue();
 
+  const [myToken, setMyToken] = useState<Token | null>(null);
   const [isGettingToken, setIsGettingToken] = useState(false);
+
+  // Load token from localStorage on mount
+  useEffect(() => {
+    const savedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (savedToken) {
+      try {
+        setMyToken(JSON.parse(savedToken));
+      } catch (e) {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+      }
+    }
+  }, []);
+
+  // Effect to update myToken details from the live queue data
+  useEffect(() => {
+    if (!myToken) return;
+
+    const allTokens = [...waitingQueue, ...servingTokens];
+    const updatedToken = allTokens.find(t => t.id === myToken.id);
+
+    if (updatedToken) {
+      setMyToken(updatedToken);
+    } else {
+      // This token is not in the waiting or serving list.
+      // It might have been served, or this might be a race condition right after creation.
+      // Add a 5-second grace period to prevent the race condition.
+      const isNewlyCreated = (new Date().getTime() - new Date(myToken.created_at).getTime()) < 5000;
+      if (!isNewlyCreated) {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+        setMyToken(null);
+      }
+    }
+  }, [waitingQueue, servingTokens, myToken]);
+
 
   const handleGetToken = async () => {
     setIsGettingToken(true);
-
-    // Simulate slight delay for better UX
-    setTimeout(() => {
-      const newToken = getToken();
-      toast({
-        title: "Token Issued",
-        description: `Your token #${newToken.number} has been issued.`,
-      });
-      setIsGettingToken(false);
-    }, 500);
+    const newToken = await getToken();
+    if (newToken) {
+      localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(newToken));
+      setMyToken(newToken);
+    }
+    setIsGettingToken(false);
   };
 
-  const currentPosition = currentToken 
-    ? queue.findIndex(token => token.id === currentToken.id) + 1 
-    : null;
-
-  const estimatedWait = currentPosition
-    ? getEstimatedWaitTime(currentPosition)
+  const myPosition = myToken ? waitingQueue.findIndex(t => t.id === myToken.id) + 1 : null;
+  const myServingCounter = myToken?.status === 'serving'
+    ? counters.find(c => c.id === myToken.served_by_counter_id)
     : null;
 
   return (
@@ -59,15 +88,16 @@ const CustomerPortal = () => {
 
         {/* Queue Status Display */}
         <QueueDisplay
-          currentServing={currentServing}
-          queueLength={liveQueueCount}
-          nextToken={queue[0]?.number}
-          estimatedWaitTime={liveEstimatedWaitTime}
+          servingTokens={servingTokens}
+          counters={counters}
+          waitingCount={waitingQueue.length}
+          liveEstimatedWaitTime={liveEstimatedWaitTime}
+          liveQueueCount={liveQueueCount}
         />
 
         {/* Token Management */}
         <div className="max-w-2xl mx-auto">
-          {!currentToken ? (
+          {!myToken ? (
             /* Get Token Card */
             <Card className="bg-gradient-card shadow-elevated border-border">
               <CardHeader className="text-center pb-6">
@@ -80,24 +110,9 @@ const CustomerPortal = () => {
                 <p className="text-muted-foreground mb-8">
                   Click the button below to get your queue token and join the line.
                 </p>
-                <Button
-                  variant="hero"
-                  size="xl"
-                  onClick={handleGetToken}
-                  disabled={isGettingToken}
-                  className="w-full max-w-xs token-bounce"
-                >
-                  {isGettingToken ? (
-                    <>
-                      <RefreshCw className="w-5 h-5 animate-spin" />
-                      Getting Token...
-                    </>
-                  ) : (
-                    <>
-                      <Ticket className="w-5 h-5" />
-                      Get Token
-                    </>
-                  )}
+                <Button variant="hero" size="xl" onClick={handleGetToken} disabled={isGettingToken}>
+                  {isGettingToken ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Ticket className="w-5 h-5" />}
+                  {isGettingToken ? 'Getting Token...' : 'Get Token'}
                 </Button>
               </CardContent>
             </Card>
@@ -113,55 +128,27 @@ const CustomerPortal = () => {
                 </CardHeader>
                 <CardContent className="text-center">
                   <div className="text-6xl font-bold mb-4 text-accent token-bounce">
-                    #{currentToken.number}
+                    #{myToken.number}
                   </div>
                   <div className="text-muted-foreground mb-6">
-                    Issued at {new Date(currentToken.timestamp).toLocaleTimeString()}
+                    Issued at {new Date(myToken.created_at).toLocaleTimeString()}
                   </div>
                   
-                  {currentPosition !== null && currentPosition > 0 && (
+                  {myPosition && myPosition > 0 && (
                     <div className="bg-muted/50 rounded-lg p-4 mb-4">
-                      <div className="flex items-center justify-center gap-4 text-sm">
-                        <div>
-                          <div className="text-2xl font-bold text-primary">{currentPosition}</div>
-                          <div className="text-muted-foreground">Position in Queue</div>
-                        </div>
-                        {estimatedWait && estimatedWait !== 'N/A' && (
-                          <div className="border-l border-border pl-4">
-                            <div className="text-2xl font-bold text-warning">{estimatedWait} min</div>
-                            <div className="text-muted-foreground">Estimated Wait</div>
-                          </div>
-                        )}
-                      </div>
+                      <div className="text-2xl font-bold text-primary">{myPosition}</div>
+                      <div className="text-muted-foreground">Position in Queue</div>
                     </div>
                   )}
 
-                  {currentPosition === 0 && (
-                    <div className="bg-success/10 border border-success/20 rounded-lg p-4 mb-4">
-                      <div className="text-success font-semibold flex items-center justify-center gap-2">
-                        <Clock className="w-5 h-5" />
-                        You're next! Please be ready.
-                      </div>
-                    </div>
-                  )}
-
-                  {currentServing === currentToken.number && (
+                  {myServingCounter && (
                     <div className="bg-gradient-primary rounded-lg p-6 text-primary-foreground">
                       <div className="text-xl font-bold mb-2">🎉 You're being served!</div>
                       <div className="text-primary-foreground/80">
-                        Please proceed to the service counter.
+                        Please proceed to <span className="font-bold">{myServingCounter.name}</span>.
                       </div>
                     </div>
                   )}
-                </CardContent>
-              </Card>
-
-              <Card className="bg-gradient-card shadow-card border-border">
-                <CardContent className="pt-6">
-                  <div className="text-center text-sm text-muted-foreground">
-                    Keep this page open to track your position in real-time.
-                    You'll be notified when it's your turn.
-                  </div>
                 </CardContent>
               </Card>
             </div>
