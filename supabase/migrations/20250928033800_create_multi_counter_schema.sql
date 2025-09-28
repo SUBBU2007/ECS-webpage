@@ -63,7 +63,7 @@ CREATE POLICY "Allow public read-only access to counters"
 ON public.counters FOR SELECT USING (true);
 
 CREATE POLICY "Allow admins to manage counters"
-ON public.counters FOR ALL -- ALL includes INSERT, UPDATE, DELETE
+ON public.counters FOR ALL
 USING (public.has_role(auth.uid(), 'admin'))
 WITH CHECK (public.has_role(auth.uid(), 'admin'));
 
@@ -89,7 +89,6 @@ USING (public.has_role(auth.uid(), 'admin'));
 CREATE POLICY "Allow public read-only access to system state"
 ON public.system_state FOR SELECT USING (true);
 
--- Allow any user to update the state, required for the getToken transaction.
 CREATE POLICY "Allow public access to update system state"
 ON public.system_state FOR UPDATE
 TO public

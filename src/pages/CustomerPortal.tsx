@@ -12,9 +12,9 @@ const TOKEN_STORAGE_KEY = 'customer_token';
 const CustomerPortal = () => {
   const { toast } = useToast();
   const {
-    counters,
-    waitingQueue,
-    servingTokens,
+    queue,
+    currentServing,
+    nextToken,
     getToken,
     liveQueueCount,
     liveEstimatedWaitTime,
@@ -39,37 +39,44 @@ const CustomerPortal = () => {
   useEffect(() => {
     if (!myToken) return;
 
-    const allTokens = [...waitingQueue, ...servingTokens];
-    const updatedToken = allTokens.find(t => t.id === myToken.id);
+    const isBeingServed = currentServing === myToken.number;
+    const isInWaitingQueue = queue.some(t => t.id === myToken.id);
 
-    if (updatedToken) {
-      setMyToken(updatedToken);
-    } else {
-      // This token is not in the waiting or serving list.
-      // It might have been served, or this might be a race condition right after creation.
-      // Add a 5-second grace period to prevent the race condition.
-      const isNewlyCreated = (new Date().getTime() - new Date(myToken.created_at).getTime()) < 5000;
-      if (!isNewlyCreated) {
-        localStorage.removeItem(TOKEN_STORAGE_KEY);
-        setMyToken(null);
+    if (isBeingServed) {
+      if (myToken.status !== 'serving') {
+        setMyToken(prev => prev ? { ...prev, status: 'serving' } : null);
       }
+    } else if (isInWaitingQueue) {
+      if (myToken.status !== 'waiting') {
+        setMyToken(prev => prev ? { ...prev, status: 'waiting' } : null);
+      }
+    } else {
+      // If it's not waiting and not being served, it's "stale" and can be cleared.
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      setMyToken(null);
     }
-  }, [waitingQueue, servingTokens, myToken]);
+  }, [queue, currentServing, myToken]);
 
 
   const handleGetToken = async () => {
     setIsGettingToken(true);
-    const newToken = await getToken();
-    if (newToken) {
-      localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(newToken));
-      setMyToken(newToken);
+    try {
+      const newToken = await getToken();
+      if (newToken) {
+        localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(newToken));
+        setMyToken(newToken);
+        toast({
+          title: "Token Issued",
+          description: `Your token #${newToken.number} has been issued.`,
+        });
+      }
+    } finally {
+      setIsGettingToken(false);
     }
-    setIsGettingToken(false);
   };
 
-  const myPosition = myToken ? waitingQueue.findIndex(t => t.id === myToken.id) + 1 : null;
-  const myServingCounter = myToken?.status === 'serving'
-    ? counters.find(c => c.id === myToken.served_by_counter_id)
+  const myPosition = myToken && myToken.status === 'waiting'
+    ? queue.findIndex(t => t.id === myToken.id) + 1
     : null;
 
   return (
@@ -86,19 +93,15 @@ const CustomerPortal = () => {
           </p>
         </div>
 
-        {/* Queue Status Display */}
         <QueueDisplay
-          servingTokens={servingTokens}
-          counters={counters}
-          waitingCount={waitingQueue.length}
-          liveEstimatedWaitTime={liveEstimatedWaitTime}
-          liveQueueCount={liveQueueCount}
+          currentServing={currentServing}
+          queueLength={liveQueueCount}
+          nextToken={nextToken?.number}
+          estimatedWaitTime={liveEstimatedWaitTime}
         />
 
-        {/* Token Management */}
         <div className="max-w-2xl mx-auto">
           {!myToken ? (
-            /* Get Token Card */
             <Card className="bg-gradient-card shadow-elevated border-border">
               <CardHeader className="text-center pb-6">
                 <div className="w-16 h-16 bg-gradient-primary rounded-xl flex items-center justify-center mx-auto mb-4 glow-primary">
@@ -117,7 +120,6 @@ const CustomerPortal = () => {
               </CardContent>
             </Card>
           ) : (
-            /* Current Token Display */
             <div className="space-y-6">
               <Card className="bg-gradient-card shadow-elevated border-border">
                 <CardHeader className="text-center pb-6">
@@ -134,18 +136,18 @@ const CustomerPortal = () => {
                     Issued at {new Date(myToken.created_at).toLocaleTimeString()}
                   </div>
                   
-                  {myPosition && myPosition > 0 && (
+                  {myToken.status === 'waiting' && myPosition && myPosition > 0 && (
                     <div className="bg-muted/50 rounded-lg p-4 mb-4">
                       <div className="text-2xl font-bold text-primary">{myPosition}</div>
                       <div className="text-muted-foreground">Position in Queue</div>
                     </div>
                   )}
 
-                  {myServingCounter && (
+                  {myToken.status === 'serving' && (
                     <div className="bg-gradient-primary rounded-lg p-6 text-primary-foreground">
                       <div className="text-xl font-bold mb-2">🎉 You're being served!</div>
                       <div className="text-primary-foreground/80">
-                        Please proceed to <span className="font-bold">{myServingCounter.name}</span>.
+                        Please proceed to the counter.
                       </div>
                     </div>
                   )}
