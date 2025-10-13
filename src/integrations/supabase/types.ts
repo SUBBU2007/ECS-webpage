@@ -178,6 +178,29 @@ export type CompositeTypes<
     ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
     : never
 
+// Custom types for the Queue Management System
+export interface Token {
+  id: number;
+  token_number: number;
+  status: 'waiting' | 'serving' | 'served' | 'skipped';
+  created_at: string;
+}
+
+export interface CameraData {
+  people_count: number;
+  estimated_wait_time: number;
+}
+
+export interface Counter {
+  id: number;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  current_token_id: number | null;
+  camera_data: CameraData;
+  queue: Token[];
+}
+
 export const Constants = {
   public: {
     Enums: {

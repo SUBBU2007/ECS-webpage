@@ -1,85 +1,37 @@
 import { useState } from 'react';
-import { Play, SkipForward, RotateCcw, Settings, AlertTriangle } from 'lucide-react';
+import { Play, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { useQueue } from '@/hooks/useQueue';
-import QueueDisplay from '@/components/QueueDisplay';
 import Navigation from '@/components/Navigation';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
+import CountersDisplay from '@/components/CountersDisplay';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const AdminPortal = () => {
+const AdminPortal = () from {
   const { toast } = useToast();
-  const {
-    queue,
-    currentServing,
-    queueLength,
-    liveQueueCount,
-    serveNext,
-    skipToken,
-    resetQueue
-  } = useQueue();
+  const { countersData, isLoading, error, serveNext } = useQueue();
+  const [isProcessing, setIsProcessing] = useState<number | null>(null);
 
-  const [isProcessing, setIsProcessing] = useState(false);
-
-  const handleServeNext = () => {
+  const handleServeNext = async (counterId: number, queueLength: number) => {
     if (queueLength === 0) {
       toast({
         title: "No tokens in queue",
-        description: "There are no customers waiting to be served.",
+        description: "There are no customers waiting to be served at this counter.",
         variant: "destructive",
       });
       return;
     }
 
-    setIsProcessing(true);
-    setTimeout(() => {
-      const servedToken = serveNext();
-      if (servedToken) {
-        toast({
-          title: "Next customer served",
-          description: `Token #${servedToken.number} is now being served.`,
-        });
-      }
-      setIsProcessing(false);
-    }, 300);
-  };
-
-  const handleSkipToken = () => {
-    if (queueLength === 0) {
+    setIsProcessing(counterId);
+    const servedToken = await serveNext(counterId);
+    if (servedToken) {
       toast({
-        title: "No tokens to skip",
-        description: "There are no customers in the queue to skip.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const skippedToken = skipToken();
-    if (skippedToken) {
-      toast({
-        title: "Token skipped",
-        description: `Token #${skippedToken.number} has been skipped.`,
+        title: "Next customer served",
+        description: `Token #${servedToken.token_number} is now being served.`,
       });
     }
-  };
-
-  const handleResetQueue = () => {
-    resetQueue();
-    toast({
-      title: "Queue reset",
-      description: "The queue has been cleared. Daily stats are preserved.",
-    });
+    setIsProcessing(null);
   };
 
   return (
@@ -96,15 +48,11 @@ const AdminPortal = () => {
           </p>
         </div>
 
-        <QueueDisplay
-          currentServing={currentServing}
-          queueLength={liveQueueCount}
-          nextToken={queue[0]?.number}
-          showNextToken={true}
-        />
+        {/* Display all counters */}
+        <CountersDisplay counters={countersData} isLoading={isLoading} error={error} />
 
-        <div className="max-w-4xl mx-auto">
-          <Card className="bg-gradient-card shadow-elevated border-border mb-8">
+        <div className="max-w-6xl mx-auto mt-8">
+          <Card className="bg-gradient-card shadow-elevated border-border">
             <CardHeader>
               <CardTitle className="text-2xl flex items-center gap-2">
                 <Settings className="w-6 h-6" />
@@ -112,117 +60,72 @@ const AdminPortal = () => {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Button
-                  variant="secondary"
-                  size="lg"
-                  onClick={handleServeNext}
-                  disabled={isProcessing || queueLength === 0}
-                  className="flex-col h-20 transition-bounce bg-success text-success-foreground hover:bg-success/90"
-                >
-                  <Play className="w-6 h-6 mb-1" />
-                  <span className="text-sm">Serve Next</span>
-                  {queueLength > 0 && (
-                    <span className="text-xs opacity-80">Token #{queue[0]?.number}</span>
-                  )}
-                </Button>
+              <Tabs defaultValue={countersData[0]?.id.toString() || ''} className="w-full">
+                <TabsList className="grid w-full grid-cols-3">
+                   {countersData.map(counter => (
+                    <TabsTrigger key={counter.id} value={counter.id.toString()}>
+                      {counter.name}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
 
-                <Button
-                  variant="secondary"
-                  size="lg"
-                  onClick={handleSkipToken}
-                  disabled={queueLength === 0}
-                  className="flex-col h-20 transition-bounce bg-warning text-warning-foreground hover:bg-warning/90"
-                >
-                  <SkipForward className="w-6 h-6 mb-1" />
-                  <span className="text-sm">Skip Token</span>
-                  {queueLength > 0 && (
-                    <span className="text-xs opacity-80">Skip #{queue[0]?.number}</span>
-                  )}
-                </Button>
+                {countersData.map(counter => (
+                  <TabsContent key={counter.id} value={counter.id.toString()}>
+                    <div className="mt-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* Action Panel */}
+                        <div className="flex flex-col gap-4">
+                           <Button
+                            variant="secondary"
+                            size="lg"
+                            onClick={() => handleServeNext(counter.id, counter.queue.length)}
+                            disabled={isProcessing === counter.id || counter.queue.length === 0}
+                            className="flex-col h-24 transition-bounce bg-success text-success-foreground hover:bg-success/90"
+                          >
+                            <Play className="w-8 h-8 mb-1" />
+                            <span className="text-md">Serve Next</span>
+                            {counter.queue.length > 0 && (
+                              <span className="text-sm opacity-80">Token #{counter.queue[0]?.token_number}</span>
+                            )}
+                          </Button>
+                           {/* Add other actions like skip or reset here if needed */}
+                        </div>
 
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      variant="destructive"
-                      size="lg"
-                      className="flex-col h-20 transition-bounce"
-                    >
-                      <RotateCcw className="w-6 h-6 mb-1" />
-                      <span className="text-sm">Reset Queue</span>
-                      <span className="text-xs opacity-80">Clear all</span>
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent className="bg-gradient-card border-border">
-                    <AlertDialogHeader>
-                      <AlertDialogTitle className="flex items-center gap-2">
-                        <AlertTriangle className="w-5 h-5 text-destructive" />
-                        Confirm Queue Reset
-                      </AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This will clear all tokens from the current queue.
-                        Daily statistics will be preserved. This action cannot be undone.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={handleResetQueue} className="bg-destructive hover:bg-destructive/90">
-                        Reset Queue
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </div>
+                        {/* Queue List */}
+                        <div>
+                          <h3 className="text-lg font-semibold mb-2">
+                            Queue ({counter.queue.length} waiting)
+                          </h3>
+                          {counter.queue.length > 0 ? (
+                            <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                              {counter.queue.map((token, index) => (
+                                <div
+                                  key={token.id}
+                                  className={`
+                                    bg-muted/50 rounded-lg p-3 text-center border
+                                    ${index === 0 ? 'border-success bg-success/10' : 'border-border'}
+                                  `}
+                                >
+                                  <div className={`font-bold text-lg ${index === 0 ? 'text-success' : 'text-foreground'}`}>
+                                    #{token.token_number}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-center text-muted-foreground py-8">
+                              <div className="text-4xl mb-2">🎉</div>
+                              <p>Queue is empty!</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </TabsContent>
+                ))}
+              </Tabs>
             </CardContent>
           </Card>
-
-          {queueLength > 0 && (
-            <Card className="bg-gradient-card shadow-card border-border">
-              <CardHeader>
-                <CardTitle className="text-xl">Current Queue ({queueLength} waiting)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                  {queue.map((token, index) => (
-                    <div
-                      key={token.id}
-                      className={`
-                        bg-muted/50 rounded-lg p-3 text-center border
-                        ${index === 0
-                          ? 'border-success bg-success/10 pulse-glow'
-                          : 'border-border'
-                        }
-                      `}
-                    >
-                      <div className={`font-bold text-lg ${index === 0 ? 'text-success' : 'text-foreground'}`}>
-                        #{token.number}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {new Date(token.timestamp).toLocaleTimeString()}
-                      </div>
-                      {index === 0 && (
-                        <div className="text-xs text-success font-medium mt-1">
-                          Next
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {queueLength === 0 && (
-            <Card className="bg-gradient-card shadow-card border-border">
-              <CardContent className="pt-8 pb-8 text-center">
-                <div className="text-6xl mb-4">🎉</div>
-                <h3 className="text-2xl font-bold mb-2">Queue is Empty!</h3>
-                <p className="text-muted-foreground">
-                  No customers are currently waiting. Great job!
-                </p>
-              </CardContent>
-            </Card>
-          )}
         </div>
       </div>
     </div>

@@ -1,209 +1,122 @@
 import { useState, useEffect, useCallback } from 'react';
+import { supabase } from '@/integrations/supabase/client';
+import { Counter } from '@/integrations/supabase/types';
 
-export interface QueueToken {
-  id: string;
-  number: number;
-  timestamp: number;
-}
-
-export interface QueueStats {
-  tokensServedToday: number;
-  peakQueueSize: number;
-  totalWaitTime: number; // in minutes
-  tokensProcessed: number; // for calculating average
-}
-
-const QUEUE_STORAGE_KEY = 'queue_data';
-const STATS_STORAGE_KEY = 'queue_stats';
-
-// Get today's date as a key
-const getTodayKey = () => new Date().toDateString();
+const API_BASE_URL = 'http://localhost:3001/api';
 
 export const useQueue = () => {
-  const [queue, setQueue] = useState<QueueToken[]>([]);
-  const [currentServing, setCurrentServing] = useState<number | null>(null);
-  const [nextTokenNumber, setNextTokenNumber] = useState(1);
-  const [currentToken, setCurrentToken] = useState<QueueToken | null>(null);
+  const [countersData, setCountersData] = useState<Counter[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [currentToken, setCurrentToken] = useState<{ number: number; counterId: number } | null>(null);
 
-  // State for live queue data from camera
-  const [liveQueueCount, setLiveQueueCount] = useState(0);
-  const [liveEstimatedWaitTime, setLiveEstimatedWaitTime] = useState(0);
 
-  const [stats, setStats] = useState<QueueStats>({
-    tokensServedToday: 0,
-    peakQueueSize: 0,
-    totalWaitTime: 0,
-    tokensProcessed: 0
-  });
-
-  // Load data from localStorage on mount
-  useEffect(() => {
-    const savedQueue = localStorage.getItem(QUEUE_STORAGE_KEY);
-    const savedStats = localStorage.getItem(STATS_STORAGE_KEY);
-
-    if (savedQueue) {
-      try {
-        const queueData = JSON.parse(savedQueue);
-        setQueue(queueData.queue || []);
-        setCurrentServing(queueData.currentServing || null);
-        setNextTokenNumber(queueData.nextTokenNumber || 1);
-        setCurrentToken(queueData.currentToken || null);
-      } catch (error) {
-        console.error('Error loading queue data:', error);
+  const fetchQueueStatus = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/token/status`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
+      const data: Counter[] = await response.json();
+      setCountersData(data);
+      setError(null);
+    } catch (e: any) {
+      setError(e.message || 'Failed to fetch queue status.');
+      console.error(e);
+    } finally {
+      setIsLoading(false);
     }
+  }, []);
 
-    if (savedStats) {
-      try {
-        const statsData = JSON.parse(savedStats);
-        const today = getTodayKey();
-        if (statsData.date === today) {
-          setStats(statsData.stats);
-        } else {
-          // Reset stats for new day
-          const newStats = {
-            tokensServedToday: 0,
-            peakQueueSize: 0,
-            totalWaitTime: 0,
-            tokensProcessed: 0
-          };
-          setStats(newStats);
-          localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify({
-            date: today,
-            stats: newStats
-          }));
+  // Effect for initial data fetch and real-time subscription
+  useEffect(() => {
+    // Fetch initial data
+    fetchQueueStatus();
+
+    // Set up Supabase real-time listener
+    const channel = supabase.channel('qms-channel');
+
+    const subscription = channel
+      .on('broadcast', { event: 'DB_CHANGE' }, (payload) => {
+        console.log('Database change received!', payload);
+        // Refetch data when a change is detected
+        fetchQueueStatus();
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('Connected to real-time channel!');
         }
-      } catch (error) {
-        console.error('Error loading stats data:', error);
+        if (status === 'CHANNEL_ERROR') {
+          console.error('Real-time channel error.');
+          setError('Connection to real-time server failed.');
+        }
+        if (status === 'TIMED_OUT') {
+          console.warn('Real-time connection timed out.');
+          setError('Real-time connection timed out.');
+        }
+      });
+
+    // Cleanup subscription on component unmount
+    return () => {
+      supabase.removeChannel(subscription);
+    };
+  }, [fetchQueueStatus]);
+
+    // Get a new token for a specific counter
+  const getToken = useCallback(async (counterId: number) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/token/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ counterId }),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to get token.');
       }
+      const newToken = await response.json();
+      setCurrentToken({ number: newToken.token_number, counterId: newToken.counter_id });
+      // The real-time listener will handle updating the queue display
+      return newToken;
+    } catch (e: any) {
+      setError(e.message || 'An error occurred while getting a token.');
+      console.error(e);
+      return null;
     }
   }, []);
 
-  // Effect for fetching live queue data
-  useEffect(() => {
-    const fetchLiveQueueData = async () => {
-      try {
-        const response = await fetch('/api/queue');
-        if (!response.ok) throw new Error('Network response was not ok');
-        const data = await response.json();
-        setLiveQueueCount(data.count);
-        setLiveEstimatedWaitTime(data.count * 2);
-      } catch (error) {
-        console.error("Failed to fetch live queue data:", error);
+  // Serve the next token for a specific counter
+  const serveNext = useCallback(async (counterId: number) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/token/serve/${counterId}`, {
+        method: 'POST',
+      });
+      if (!response.ok) {
+        if (response.status === 404) {
+          // Handle the case where there are no tokens in the queue
+          console.log(`No tokens to serve for counter ${counterId}.`);
+          return null;
+        }
+        throw new Error('Failed to serve next token.');
       }
-    };
-    fetchLiveQueueData();
-    const intervalId = setInterval(fetchLiveQueueData, 4000);
-    return () => clearInterval(intervalId);
+      const servedToken = await response.json();
+      // The real-time listener will handle updating the queue display
+      return servedToken;
+    } catch (e: any) {
+      setError(e.message || 'An error occurred while serving the next token.');
+      console.error(e);
+      return null;
+    }
   }, []);
 
-  // Save queue data to localStorage
-  const saveQueueData = useCallback((queueData: any) => {
-    localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(queueData));
-  }, []);
-
-  // Save stats data to localStorage
-  const saveStatsData = useCallback((statsData: QueueStats) => {
-    localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify({
-      date: getTodayKey(),
-      stats: statsData
-    }));
-  }, []);
-
-  // Get a new token
-  const getToken = useCallback(() => {
-    const newToken: QueueToken = {
-      id: `token-${Date.now()}`,
-      number: nextTokenNumber,
-      timestamp: Date.now()
-    };
-
-    const newQueue = [...queue, newToken];
-    const newNextTokenNumber = nextTokenNumber + 1;
-
-    setQueue(newQueue);
-    setNextTokenNumber(newNextTokenNumber);
-    setCurrentToken(newToken);
-
-    const newStats = { ...stats, peakQueueSize: Math.max(stats.peakQueueSize, newQueue.length) };
-    setStats(newStats);
-    saveStatsData(newStats);
-
-    saveQueueData({ queue: newQueue, currentServing, nextTokenNumber: newNextTokenNumber, currentToken: newToken });
-    return newToken;
-  }, [queue, nextTokenNumber, currentServing, stats, saveQueueData, saveStatsData]);
-
-  // Serve next token
-  const serveNext = useCallback(() => {
-    if (queue.length === 0) return null;
-    const nextToken = queue[0];
-    const newQueue = queue.slice(1);
-    const waitTime = (Date.now() - nextToken.timestamp) / (1000 * 60);
-
-    setQueue(newQueue);
-    setCurrentServing(nextToken.number);
-
-    const newStats = {
-      ...stats,
-      tokensServedToday: stats.tokensServedToday + 1,
-      totalWaitTime: stats.totalWaitTime + waitTime,
-      tokensProcessed: stats.tokensProcessed + 1
-    };
-    setStats(newStats);
-    saveStatsData(newStats);
-
-    saveQueueData({ queue: newQueue, currentServing: nextToken.number, nextTokenNumber, currentToken });
-    return nextToken;
-  }, [queue, nextTokenNumber, currentToken, stats, saveQueueData, saveStatsData]);
-
-  // Skip current token
-  const skipToken = useCallback(() => {
-    if (queue.length === 0) return null;
-    const skippedToken = queue[0];
-    const newQueue = queue.slice(1);
-    setQueue(newQueue);
-    saveQueueData({ queue: newQueue, currentServing, nextTokenNumber, currentToken });
-    return skippedToken;
-  }, [queue, currentServing, nextTokenNumber, currentToken, saveQueueData]);
-
-  // Reset queue (not stats)
-  const resetQueue = useCallback(() => {
-    setQueue([]);
-    setCurrentServing(null);
-    setNextTokenNumber(1);
-    setCurrentToken(null);
-    saveQueueData({ queue: [], currentServing: null, nextTokenNumber: 1, currentToken: null });
-  }, [saveQueueData]);
-
-  // Reset daily stats only
-  const resetStats = useCallback(() => {
-    const newStats = { tokensServedToday: 0, peakQueueSize: 0, totalWaitTime: 0, tokensProcessed: 0 };
-    setStats(newStats);
-    saveStatsData(newStats);
-  }, [saveStatsData]);
-
-  // Calculate estimated wait time
-  const getEstimatedWaitTime = useCallback((position: number) => {
-    if (stats.tokensProcessed === 0) return 'N/A';
-    const avgWaitTime = stats.totalWaitTime / stats.tokensProcessed;
-    return Math.round(avgWaitTime * position);
-  }, [stats]);
 
   return {
-    queue,
-    currentServing,
-    nextTokenNumber,
+    countersData,
+    isLoading,
+    error,
     currentToken,
-    queueLength: queue.length,
-    liveQueueCount,
-    stats,
-    averageWaitTime: stats.tokensProcessed > 0 ? Math.round(stats.totalWaitTime / stats.tokensProcessed) : 0,
-    liveEstimatedWaitTime,
     getToken,
     serveNext,
-    skipToken,
-    resetQueue,
-    resetStats,
-    getEstimatedWaitTime
+    fetchQueueStatus, // Exposing this might be useful for manual refresh
   };
 };
