@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Counter } from "@/integrations/supabase/types";
+import { Counter } from "@/hooks/useQueue";
 import { Users, Clock, Ticket } from "lucide-react";
 
 interface CountersDisplayProps {
@@ -35,7 +35,7 @@ const CountersDisplay = ({ counters, isLoading, error }: CountersDisplayProps) =
           <CardContent className="text-center">
             <div className="mb-4">
               <div className="text-5xl font-bold text-primary">
-                {counter.current_token_id ? `#${counter.current_token_id}` : '-'}
+                {counter.current_token_number ? `#${counter.current_token_number}` : '-'}
               </div>
               <div className="text-sm text-muted-foreground">Now Serving</div>
             </div>

@@ -165,7 +165,7 @@ const CustomerPortal = () => {
                     </div>
                   )}
 
-                  {tokenCounter?.current_token_id === currentToken.number && (
+                  {tokenCounter?.current_token_number === currentToken.number && (
                     <div className="bg-gradient-primary rounded-lg p-6 text-primary-foreground">
                       <div className="text-xl font-bold mb-2">🎉 You're being served!</div>
                       <div className="text-primary-foreground/80">

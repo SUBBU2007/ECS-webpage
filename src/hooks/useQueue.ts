@@ -142,7 +142,7 @@ export interface Counter {
   name: string;
   description: string | null;
   is_active: boolean;
-  current_token_id: number | null;
+  current_token_number: number | null;
   camera_data: CameraData;
   queue: Token[];
 }
@@ -163,7 +163,7 @@ const initialCounters: Counter[] = [
     name: 'General Inquiry',
     description: 'For all general questions and information.',
     is_active: true,
-    current_token_id: null,
+    current_token_number: null,
     camera_data: { people_count: 3, estimated_wait_time: 15 },
     queue: [],
   },
@@ -172,7 +172,7 @@ const initialCounters: Counter[] = [
     name: 'Technical Support',
     description: 'For technical assistance and troubleshooting.',
     is_active: true,
-    current_token_id: null,
+    current_token_number: null,
     camera_data: { people_count: 1, estimated_wait_time: 5 },
     queue: [],
   },
@@ -181,7 +181,7 @@ const initialCounters: Counter[] = [
     name: 'Billing',
     description: 'For payments and billing inquiries.',
     is_active: true,
-    current_token_id: null,
+    current_token_number: null,
     camera_data: { people_count: 2, estimated_wait_time: 10 },
     queue: [],
   },
@@ -253,6 +253,29 @@ export const useQueue = () => {
     }
   }, [countersData, stats, isLoading, currentToken]);
 
+  // Simulate camera API data fetching for dynamic wait times
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCountersData(prevCounters =>
+        prevCounters.map(counter => {
+          // Simulate a random number of people detected by the camera
+          const peopleCount = Math.floor(Math.random() * 5) + counter.queue.length;
+          // Simple logic: 5 minutes wait time per person
+          const estimatedWaitTime = peopleCount * 5;
+          return {
+            ...counter,
+            camera_data: {
+              people_count: peopleCount,
+              estimated_wait_time: estimatedWaitTime,
+            },
+          };
+        })
+      );
+    }, 5000); // Update every 5 seconds
+
+    return () => clearInterval(interval);
+  }, []);
+
   // Get a new token for a specific counter
   const getToken = useCallback((counterId: number) => {
     const counter = countersData.find(c => c.id === counterId);
@@ -310,7 +333,7 @@ export const useQueue = () => {
           return {
             ...c,
             queue: c.queue.slice(1),
-            current_token_id: servedToken.token_number,
+            current_token_number: servedToken.token_number,
           };
         }
         return c;
