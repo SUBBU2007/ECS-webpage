@@ -1,209 +1,277 @@
+// import { useState, useEffect, useCallback } from 'react';
+// import { supabase } from '@/integrations/supabase/client';
+// import { Counter } from '@/integrations/supabase/types';
+
+// const API_BASE_URL = 'http://localhost:3001/api';
+
+// export const useQueue = () => {
+//   const [countersData, setCountersData] = useState<Counter[]>([]);
+//   const [isLoading, setIsLoading] = useState(true);
+//   const [error, setError] = useState<string | null>(null);
+//   const [currentToken, setCurrentToken] = useState<{ number: number; counterId: number } | null>(null);
+
+
+//   const fetchQueueStatus = useCallback(async () => {
+//     setIsLoading(true);
+//     try {
+//       const response = await fetch(`${API_BASE_URL}/token/status`);
+//       if (!response.ok) {
+//         throw new Error(`HTTP error! status: ${response.status}`);
+//       }
+//       const data: Counter[] = await response.json();
+//       setCountersData(data);
+//       setError(null);
+//     } catch (e: any) {
+//       setError(e.message || 'Failed to fetch queue status.');
+//       console.error(e);
+//     } finally {
+//       setIsLoading(false);
+//     }
+//   }, []);
+
+//   // Effect for initial data fetch and real-time subscription
+//   useEffect(() => {
+//     // Fetch initial data
+//     fetchQueueStatus();
+
+//     // Set up Supabase real-time listener
+//     const channel = supabase.channel('qms-channel');
+
+//     const subscription = channel
+//       .on('broadcast', { event: 'DB_CHANGE' }, (payload) => {
+//         console.log('Database change received!', payload);
+//         // Refetch data when a change is detected
+//         fetchQueueStatus();
+//       })
+//       .subscribe((status) => {
+//         if (status === 'SUBSCRIBED') {
+//           console.log('Connected to real-time channel!');
+//         }
+//         if (status === 'CHANNEL_ERROR') {
+//           console.error('Real-time channel error.');
+//           setError('Connection to real-time server failed.');
+//         }
+//         if (status === 'TIMED_OUT') {
+//           console.warn('Real-time connection timed out.');
+//           setError('Real-time connection timed out.');
+//         }
+//       });
+
+//     // Cleanup subscription on component unmount
+//     return () => {
+//       supabase.removeChannel(subscription);
+//     };
+//   }, [fetchQueueStatus]);
+
+//     // Get a new token for a specific counter
+//   const getToken = useCallback(async (counterId: number) => {
+//     try {
+//       const response = await fetch(`${API_BASE_URL}/token/create`, {
+//         method: 'POST',
+//         headers: { 'Content-Type': 'application/json' },
+//         body: JSON.stringify({ counterId }),
+//       });
+//       if (!response.ok) {
+//         throw new Error('Failed to get token.');
+//       }
+//       const newToken = await response.json();
+//       setCurrentToken({ number: newToken.token_number, counterId: newToken.counter_id });
+//       // The real-time listener will handle updating the queue display
+//       return newToken;
+//     } catch (e: any) {
+//       setError(e.message || 'An error occurred while getting a token.');
+//       console.error(e);
+//       return null;
+//     }
+//   }, []);
+
+//   // Serve the next token for a specific counter
+//   const serveNext = useCallback(async (counterId: number) => {
+//     try {
+//       const response = await fetch(`${API_BASE_URL}/token/serve/${counterId}`, {
+//         method: 'POST',
+//       });
+//       if (!response.ok) {
+//         if (response.status === 404) {
+//           // Handle the case where there are no tokens in the queue
+//           console.log(`No tokens to serve for counter ${counterId}.`);
+//           return null;
+//         }
+//         throw new Error('Failed to serve next token.');
+//       }
+//       const servedToken = await response.json();
+//       // The real-time listener will handle updating the queue display
+//       return servedToken;
+//     } catch (e: any) {
+//       setError(e.message || 'An error occurred while serving the next token.');
+//       console.error(e);
+//       return null;
+//     }
+//   }, []);
+
+
+//   return {
+//     countersData,
+//     isLoading,
+//     error,
+//     currentToken,
+//     getToken,
+//     serveNext,
+//     fetchQueueStatus, // Exposing this might be useful for manual refresh
+//   };
+// };
+
 import { useState, useEffect, useCallback } from 'react';
 
-export interface QueueToken {
-  id: string;
-  number: number;
-  timestamp: number;
+// --- Type Definitions ---
+// Moved from the deleted supabase directory to make this file self-contained.
+export interface Token {
+  id: number;
+  token_number: number;
+  status: 'waiting' | 'serving' | 'served' | 'skipped';
+  created_at: string;
 }
 
-export interface QueueStats {
-  tokensServedToday: number;
-  peakQueueSize: number;
-  totalWaitTime: number; // in minutes
-  tokensProcessed: number; // for calculating average
+export interface CameraData {
+  people_count: number;
+  estimated_wait_time: number;
 }
 
-const QUEUE_STORAGE_KEY = 'queue_data';
-const STATS_STORAGE_KEY = 'queue_stats';
+export interface Counter {
+  id: number;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  current_token_id: number | null;
+  camera_data: CameraData;
+  queue: Token[];
+}
 
-// Get today's date as a key
-const getTodayKey = () => new Date().toDateString();
+
+// --- Mock Data ---
+// This will be the initial state if nothing is in localStorage
+const initialCounters: Counter[] = [
+  {
+    id: 1,
+    name: 'General Inquiry',
+    description: 'For all general questions and information.',
+    is_active: true,
+    current_token_id: null,
+    camera_data: { people_count: 3, estimated_wait_time: 15 },
+    queue: [],
+  },
+  {
+    id: 2,
+    name: 'Technical Support',
+    description: 'For technical assistance and troubleshooting.',
+    is_active: true,
+    current_token_id: null,
+    camera_data: { people_count: 1, estimated_wait_time: 5 },
+    queue: [],
+  },
+  {
+    id: 3,
+    name: 'Billing',
+    description: 'For payments and billing inquiries.',
+    is_active: true,
+    current_token_id: null,
+    camera_data: { people_count: 2, estimated_wait_time: 10 },
+    queue: [],
+  },
+];
+
+const LOCAL_STORAGE_KEY = 'multi_counter_queue_state';
 
 export const useQueue = () => {
-  const [queue, setQueue] = useState<QueueToken[]>([]);
-  const [currentServing, setCurrentServing] = useState<number | null>(null);
-  const [nextTokenNumber, setNextTokenNumber] = useState(1);
-  const [currentToken, setCurrentToken] = useState<QueueToken | null>(null);
+  const [countersData, setCountersData] = useState<Counter[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [currentToken, setCurrentToken] = useState<{ number: number; counterId: number } | null>(null);
 
-  // State for live queue data from camera
-  const [liveQueueCount, setLiveQueueCount] = useState(0);
-  const [liveEstimatedWaitTime, setLiveEstimatedWaitTime] = useState(0);
-
-  const [stats, setStats] = useState<QueueStats>({
-    tokensServedToday: 0,
-    peakQueueSize: 0,
-    totalWaitTime: 0,
-    tokensProcessed: 0
-  });
-
-  // Load data from localStorage on mount
+  // Load state from localStorage on initial render
   useEffect(() => {
-    const savedQueue = localStorage.getItem(QUEUE_STORAGE_KEY);
-    const savedStats = localStorage.getItem(STATS_STORAGE_KEY);
+    try {
+      const savedState = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (savedState) {
+        setCountersData(JSON.parse(savedState));
+      } else {
+        // If no saved state, initialize with mock data
+        setCountersData(initialCounters);
+      }
+    } catch (error) {
+      console.error("Failed to load state from localStorage", error);
+      setCountersData(initialCounters);
+    }
+    setIsLoading(false);
+  }, []);
 
-    if (savedQueue) {
+  // Save state to localStorage whenever it changes
+  useEffect(() => {
+    // We don't want to save during the initial load
+    if (!isLoading) {
       try {
-        const queueData = JSON.parse(savedQueue);
-        setQueue(queueData.queue || []);
-        setCurrentServing(queueData.currentServing || null);
-        setNextTokenNumber(queueData.nextTokenNumber || 1);
-        setCurrentToken(queueData.currentToken || null);
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(countersData));
       } catch (error) {
-        console.error('Error loading queue data:', error);
+        console.error("Failed to save state to localStorage", error);
       }
     }
+  }, [countersData, isLoading]);
 
-    if (savedStats) {
-      try {
-        const statsData = JSON.parse(savedStats);
-        const today = getTodayKey();
-        if (statsData.date === today) {
-          setStats(statsData.stats);
-        } else {
-          // Reset stats for new day
-          const newStats = {
-            tokensServedToday: 0,
-            peakQueueSize: 0,
-            totalWaitTime: 0,
-            tokensProcessed: 0
+  // Get a new token for a specific counter
+  const getToken = useCallback((counterId: number) => {
+    let newToken: Token | null = null;
+    setCountersData(prevCounters => {
+      const newCounters = prevCounters.map(counter => {
+        if (counter.id === counterId) {
+          const lastTokenNumber = counter.queue.length > 0 ? counter.queue[counter.queue.length - 1].token_number : 0;
+          newToken = {
+            id: Date.now(), // Use timestamp for unique ID in mock setup
+            token_number: lastTokenNumber + 1,
+            status: 'waiting',
+            created_at: new Date().toISOString(),
           };
-          setStats(newStats);
-          localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify({
-            date: today,
-            stats: newStats
-          }));
+          return {
+            ...counter,
+            queue: [...counter.queue, newToken],
+          };
         }
-      } catch (error) {
-        console.error('Error loading stats data:', error);
-      }
+        return counter;
+      });
+      return newCounters;
+    });
+
+    if (newToken) {
+        setCurrentToken({ number: newToken.token_number, counterId: counterId });
     }
+    return Promise.resolve(newToken);
   }, []);
 
-  // Effect for fetching live queue data
-  useEffect(() => {
-    const fetchLiveQueueData = async () => {
-      try {
-        const response = await fetch('/api/queue');
-        if (!response.ok) throw new Error('Network response was not ok');
-        const data = await response.json();
-        setLiveQueueCount(data.count);
-        setLiveEstimatedWaitTime(data.count * 2);
-      } catch (error) {
-        console.error("Failed to fetch live queue data:", error);
-      }
-    };
-    fetchLiveQueueData();
-    const intervalId = setInterval(fetchLiveQueueData, 4000);
-    return () => clearInterval(intervalId);
+  // Serve the next token for a specific counter
+  const serveNext = useCallback((counterId: number) => {
+    let servedToken: Token | null = null;
+    setCountersData(prevCounters => {
+        const newCounters = prevCounters.map(counter => {
+            if (counter.id === counterId && counter.queue.length > 0) {
+                servedToken = counter.queue[0];
+                const newQueue = counter.queue.slice(1);
+                return {
+                    ...counter,
+                    queue: newQueue,
+                    current_token_id: servedToken.id,
+                };
+            }
+            return counter;
+        });
+        return newCounters;
+    });
+    return Promise.resolve(servedToken);
   }, []);
-
-  // Save queue data to localStorage
-  const saveQueueData = useCallback((queueData: any) => {
-    localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(queueData));
-  }, []);
-
-  // Save stats data to localStorage
-  const saveStatsData = useCallback((statsData: QueueStats) => {
-    localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify({
-      date: getTodayKey(),
-      stats: statsData
-    }));
-  }, []);
-
-  // Get a new token
-  const getToken = useCallback(() => {
-    const newToken: QueueToken = {
-      id: `token-${Date.now()}`,
-      number: nextTokenNumber,
-      timestamp: Date.now()
-    };
-
-    const newQueue = [...queue, newToken];
-    const newNextTokenNumber = nextTokenNumber + 1;
-
-    setQueue(newQueue);
-    setNextTokenNumber(newNextTokenNumber);
-    setCurrentToken(newToken);
-
-    const newStats = { ...stats, peakQueueSize: Math.max(stats.peakQueueSize, newQueue.length) };
-    setStats(newStats);
-    saveStatsData(newStats);
-
-    saveQueueData({ queue: newQueue, currentServing, nextTokenNumber: newNextTokenNumber, currentToken: newToken });
-    return newToken;
-  }, [queue, nextTokenNumber, currentServing, stats, saveQueueData, saveStatsData]);
-
-  // Serve next token
-  const serveNext = useCallback(() => {
-    if (queue.length === 0) return null;
-    const nextToken = queue[0];
-    const newQueue = queue.slice(1);
-    const waitTime = (Date.now() - nextToken.timestamp) / (1000 * 60);
-
-    setQueue(newQueue);
-    setCurrentServing(nextToken.number);
-
-    const newStats = {
-      ...stats,
-      tokensServedToday: stats.tokensServedToday + 1,
-      totalWaitTime: stats.totalWaitTime + waitTime,
-      tokensProcessed: stats.tokensProcessed + 1
-    };
-    setStats(newStats);
-    saveStatsData(newStats);
-
-    saveQueueData({ queue: newQueue, currentServing: nextToken.number, nextTokenNumber, currentToken });
-    return nextToken;
-  }, [queue, nextTokenNumber, currentToken, stats, saveQueueData, saveStatsData]);
-
-  // Skip current token
-  const skipToken = useCallback(() => {
-    if (queue.length === 0) return null;
-    const skippedToken = queue[0];
-    const newQueue = queue.slice(1);
-    setQueue(newQueue);
-    saveQueueData({ queue: newQueue, currentServing, nextTokenNumber, currentToken });
-    return skippedToken;
-  }, [queue, currentServing, nextTokenNumber, currentToken, saveQueueData]);
-
-  // Reset queue (not stats)
-  const resetQueue = useCallback(() => {
-    setQueue([]);
-    setCurrentServing(null);
-    setNextTokenNumber(1);
-    setCurrentToken(null);
-    saveQueueData({ queue: [], currentServing: null, nextTokenNumber: 1, currentToken: null });
-  }, [saveQueueData]);
-
-  // Reset daily stats only
-  const resetStats = useCallback(() => {
-    const newStats = { tokensServedToday: 0, peakQueueSize: 0, totalWaitTime: 0, tokensProcessed: 0 };
-    setStats(newStats);
-    saveStatsData(newStats);
-  }, [saveStatsData]);
-
-  // Calculate estimated wait time
-  const getEstimatedWaitTime = useCallback((position: number) => {
-    if (stats.tokensProcessed === 0) return 'N/A';
-    const avgWaitTime = stats.totalWaitTime / stats.tokensProcessed;
-    return Math.round(avgWaitTime * position);
-  }, [stats]);
 
   return {
-    queue,
-    currentServing,
-    nextTokenNumber,
+    countersData,
+    isLoading,
+    error: null,
     currentToken,
-    queueLength: queue.length,
-    liveQueueCount,
-    stats,
-    averageWaitTime: stats.tokensProcessed > 0 ? Math.round(stats.totalWaitTime / stats.tokensProcessed) : 0,
-    liveEstimatedWaitTime,
     getToken,
     serveNext,
-    skipToken,
-    resetQueue,
-    resetStats,
-    getEstimatedWaitTime
   };
 };
