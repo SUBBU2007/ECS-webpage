@@ -35,7 +35,7 @@ const CountersDisplay = ({ counters, isLoading, error }: CountersDisplayProps) =
           <CardContent className="text-center">
             <div className="mb-4">
               <div className="text-5xl font-bold text-primary">
-                {counter.current_token_id ? `#${counter.queue.find(t => t.id === counter.current_token_id)?.token_number || '...'}` : '-'}
+                {counter.current_token_id ? `#${counter.current_token_id}` : '-'}
               </div>
               <div className="text-sm text-muted-foreground">Now Serving</div>
             </div>
