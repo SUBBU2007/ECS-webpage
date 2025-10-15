@@ -10,7 +10,7 @@ This project is a multi-counter Queue Management System designed to handle custo
 - **Admin Portal**: Admins can monitor and manage all counters from a tabbed interface, serving the next customer in line.
 - **Camera Integration**: An endpoint is available for an external camera system to feed live data about queue length and estimated wait times.
 
-## Technologies Used
+If you want to work locally using your own IDE, you can clone this repo and push changes.
 
 - **Frontend**: Vite, React, TypeScript, shadcn-ui, Tailwind CSS
 - **Backend**: Node.js, Express
