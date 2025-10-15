@@ -253,25 +253,39 @@ export const useQueue = () => {
     }
   }, [countersData, stats, isLoading, currentToken]);
 
-  // Simulate camera API data fetching for dynamic wait times
+  // Fetch real camera API data for dynamic wait times
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCountersData(prevCounters =>
-        prevCounters.map(counter => {
-          // Simulate a random number of people detected by the camera
-          const peopleCount = Math.floor(Math.random() * 5) + counter.queue.length;
-          // Simple logic: 5 minutes wait time per person
-          const estimatedWaitTime = peopleCount * 5;
-          return {
-            ...counter,
-            camera_data: {
-              people_count: peopleCount,
-              estimated_wait_time: estimatedWaitTime,
-            },
-          };
-        })
-      );
-    }, 5000); // Update every 5 seconds
+    const fetchCameraData = async () => {
+      try {
+        const response = await fetch('http://127.0.0.1:5000/api/queue');
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
+        }
+        const data = await response.json();
+
+        setCountersData(prevCounters =>
+          prevCounters.map(counter => {
+            const apiData = data.find((d: any) => d.counterId === counter.id);
+            if (apiData) {
+              const peopleCount = apiData.peopleCount;
+              const estimatedWaitTime = peopleCount * 5; // 5 mins per person
+              return {
+                ...counter,
+                camera_data: {
+                  people_count: peopleCount,
+                  estimated_wait_time: estimatedWaitTime,
+                },
+              };
+            }
+            return counter;
+          })
+        );
+      } catch (error) {
+        console.error("Failed to fetch camera data:", error);
+      }
+    };
+
+    const interval = setInterval(fetchCameraData, 5000); // Update every 5 seconds
 
     return () => clearInterval(interval);
   }, []);
@@ -340,8 +354,13 @@ export const useQueue = () => {
       })
     );
 
+    // If the served token is the user's current token, clear it
+    if (currentToken && currentToken.id === servedToken.id) {
+      setCurrentToken(null);
+    }
+
     return Promise.resolve(servedToken);
-  }, [countersData, setCountersData, setStats]);
+  }, [countersData, setCountersData, setStats, currentToken, setCurrentToken]);
 
   const averageWaitTime = useMemo(() => {
     if (stats.tokensProcessed === 0) {
